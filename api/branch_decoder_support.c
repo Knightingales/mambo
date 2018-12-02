@@ -99,14 +99,21 @@ mambo_branch_type __get_thumb_branch_type(mambo_context *ctx) {
     case THUMB_BX16: {
       uint32_t rm;
       thumb_bx16_decode_fields(ctx->code.read_address, &rm);
-      type =  BRANCH_INDIRECT | BRANCH_INTERWORKING;
+      type =  BRANCH_INDIRECT;
+
+      if (*((uint16_t *)ctx->code.read_address) & 0x1)
+		type |= BRANCH_INTERWORKING;
+
       if (rm == lr) {
         type |= BRANCH_RETURN;
       }
       break;
     }
     case THUMB_BLX16:
-      type =  BRANCH_INDIRECT | BRANCH_CALL | BRANCH_INTERWORKING;
+      type =  BRANCH_INDIRECT | BRANCH_CALL;
+      if (*((uint16_t *)ctx->code.read_address) & 0x1)
+		type |= BRANCH_INTERWORKING;
+
       break;
     case THUMB_BL32:
       type =  BRANCH_DIRECT | BRANCH_CALL;
@@ -135,6 +142,10 @@ mambo_branch_type __get_thumb_branch_type(mambo_context *ctx) {
   if (type != BRANCH_NONE && (type & BRANCH_COND) == 0 && mambo_get_cond(ctx) != AL) {
     type |= BRANCH_COND | BRANCH_COND_PSR | BRANCH_COND_IT;
   }
+
+  // Switch THUMB -> ARM
+  if ((*((uint16_t *)ctx->code.read_address) & 0x1) && (type & BRANCH_INTERWORKING))
+    type &= ~BRANCH_INTERWORKING;
 
   return type;
 }
@@ -206,6 +217,11 @@ mambo_branch_type __get_arm_branch_type(mambo_context *ctx) {
   if (type != BRANCH_NONE && mambo_get_cond(ctx) != AL) {
     type |= BRANCH_COND | BRANCH_COND_PSR;
   }
+
+  // Switch THUMB -> ARM
+  if ((*((uint32_t *)ctx->code.read_address) & 0x1 == 0) && (type & BRANCH_INTERWORKING))
+    type &= ~BRANCH_INTERWORKING;
+
 
   return type;
 }

@@ -3,6 +3,7 @@
 #PLUGINS+=plugins/tb_count.c
 #PLUGINS+=plugins/mtrace.c plugins/mtrace.S
 #PLUGINS+=plugins/cachesim/cachesim.c plugins/cachesim/cachesim.S plugins/cachesim/cachesim_model.c
+PLUGINS+=plugins/btrace/btrace.c plugins/btrace/btrace.S
 
 OPTS= -DDBM_LINK_UNCOND_IMM
 OPTS+=-DDBM_INLINE_UNCOND_IMM
@@ -22,8 +23,19 @@ LDFLAGS=-static -ldl -Wl,-Ttext-segment=0xa8000000
 LIBS=-lelf -lpthread
 HEADERS=*.h makefile
 INCLUDES=-I/usr/include/libelf
-SOURCES= dispatcher.S common.c dbm.c traces.c syscalls.c dispatcher.c signals.c util.S
-SOURCES+=api/helpers.c api/plugin_support.c api/branch_decoder_support.c api/load_store.c
+SOURCES=
+SOURCES+=dispatcher.c
+SOURCES+=signals.c
+SOURCES+=dispatcher.S
+SOURCES+=common.c
+SOURCES+=dbm.c
+SOURCES+=traces.c
+SOURCES+=syscalls.c
+SOURCES+=util.S
+SOURCES+=api/helpers.c
+SOURCES+=api/plugin_support.c
+SOURCES+=api/branch_decoder_support.c
+SOURCES+=api/load_store.c
 SOURCES+=elf_loader/elf_loader.o
 
 ARCH=$(shell $(CC) -dumpmachine | awk -F '-' '{print $$1}')
@@ -46,6 +58,9 @@ ifdef PLUGINS
 	CFLAGS += -DPLUGINS_NEW
 endif
 
+OBJS=$(SOURCES:%.c=%.o)
+# OBJS+=$(SOURCES:%.S=%.o)
+OBJS+=$(PLUGINS:%.c=%.o)
 .PHONY: pie clean cleanall
 
 all:
@@ -55,14 +70,20 @@ all:
 pie:
 	@$(MAKE) --no-print-directory -C pie/ native
 
-%.o: %.c %.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+%.o: %.c
+	@echo "Building $<"
+	@$(CC) $(OPTS) $(INCLUDES) $(CFLAGS) -c -o $@ $<
 
-dbm: $(HEADERS) $(SOURCES) $(PLUGINS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OPTS) $(INCLUDES) -o $@ $(SOURCES) $(PLUGINS) $(PIE) $(LIBS)
+dbm: $(HEADERS) $(OBJS) $(PLUGINS)
+	@echo "Linking $@"
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OPTS) $(INCLUDES) -o $@ $(OBJS) $(PIE) $(LIBS)
+	@#$(CC) $(CFLAGS) $(LDFLAGS) $(OPTS) $(INCLUDES) -o $@ $(SOURCES) $(PLUGINS) $(PIE) $(LIBS)
 
 clean:
-	rm -f dbm elf_loader/elf_loader.o
+	@rm -f dbm elf_loader/elf_loader.o
+	@rm -f *.o
+	@rm -f api/*.o
+	@echo "Clean"
 
 cleanall: clean
 	$(MAKE) -C pie/ clean
