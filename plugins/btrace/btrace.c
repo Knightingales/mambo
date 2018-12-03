@@ -269,119 +269,6 @@ void branch_count(mambo_context * ctx)
 	}
 }
 
-#if 0
-
-void push_shadowstack(mambo_context * ctx, regs_t * regs)
-{
-	uint32_t addr;
-
-	printf("PC: 0x%x LR: 0x%x SP: 0x%x\n", regs->pc, regs->lr, regs->sp);
-
-	if (mambo_get_inst_type(ctx) == ARM_INST)
-	{
-		// addr = (uint32_t)ctx->code.read_address + 4;
-		addr = (uint32_t)regs->pc + 4;
-	}
-	else
-	{
-		switch (ctx->code.inst)
-		{
-			case THUMB_BL32:
-			{
-				printf("THUMB_BL32\n");
-
-				//addr = (uint32_t)ctx->code.read_address + 5;
-				addr = (uint32_t)regs->pc + 5;
-
-				break;
-			}
-
-			default:
-			{
-				printf("THUMB OTHER BRANCH\n");
-
-				//addr = (uint32_t)ctx->code.read_address + 2;
-				addr = (uint32_t)regs->pc + 2;
-
-				break;
-			}
-		}
-	}
-
-	printf("Branch 0x%x RET 0x%x\n", (uint32_t)regs->pc, addr);
-
-	shadowstack[entries++] = addr;
-
-	//printf("Call here (i = %u): %x\n", entries, addr);
-}
-
-uint32_t prev_fail = 0;
-
-void verify_shadowstack(mambo_context * ctx, regs_t * regs)
-{
-	uint32_t addr = regs->lr;
-	uint32_t inst = ctx->code.inst;
-	uint32_t inst_type = mambo_get_inst_type(ctx);
-	uint32_t branch_type = mambo_get_branch_type(ctx);
-
-
-	//printf("Return here (i = %u): %x\n", entries, addr);
-
-	if (entries == 0)
-	{
-		// printf("No entries in shadow stack!!\n");
-
-		return;
-	}
-
-	printf("PC: 0x%x\n", regs->pc);
-	printf("CC Type: %u ID: %d\n", mambo_get_fragment_type(ctx), ctx->code.fragment_id);
-	printf("BB Linked from: 0x%x\n", ctx->thread_data->code_cache_meta[ctx->code.fragment_id].linked_from->data);
-
-	if (inst_type == ARM_INST)
-	{
-		if (inst == ARM_LDM)
-		{
-			addr = *((uint32_t *)regs->sp + 15);
-		}
-		else if (inst == ARM_LDR)
-		{
-			addr = *((uint32_t *)regs->sp);
-		}
-	}
-	else if (inst_type == THUMB_INST)
-	{
-		if (inst == THUMB_POP16)
-		{
-			int i;
-			for (i = 0; i < 16; ++i)
-					printf("SP + %3d = 0x%x\n", i * 4, *((uint32_t *)regs->sp + i));
-
-			addr = *((uint32_t *)regs->sp + 6);
-
-		}
-	}
-
-	if (shadowstack[--entries] == addr)
-	{
-		printf("Success %u.\n", entries);
-	}
-	else
-	{
-		if ((prev_fail > 0) && (prev_fail - 1 > entries) && (entries < prev_fail - 1))
-		{
-			printf("Success between two fails.\n");
-		}
-
-		printf("Failed  %u. Expected: 0x%x Got: 0x%x Inst: %s\n", entries, shadowstack[entries], addr, inst == ARM_BX ? "ARM_BX" : (inst == ARM_LDM ? "ARM_LDM" : "ARM_LDR"));
-
-		prev_fail = entries;
-		//printf("Shadowstack failed check Expected: %x Got: %x for id %u!!\n", shadowstack[entries], addr, entries);
-	}
-}
-
-#endif
-
 #define REGISTER_BACKUP 16
 
 uint32_t shadowstack[1024] = { 0 };
@@ -392,7 +279,7 @@ typedef struct
 	uint32_t sp;
 	uint32_t gprs[REGISTER_BACKUP];
 	uint32_t lr;
-	uint32_t other;
+	uint32_t arg;
 	mambo_context * ctx;
 } regs_t;
 
@@ -404,9 +291,9 @@ void stack_print(uint32_t sp_l)
 {
 	int i;
 
-	for (i = 0; i < 16; ++i)
+	for (i = 0; i < 32; ++i)
 	{
-		printf("[SP + %2d] = 0x%x\n", (i - 2) * sizeof(uint32_t), *((uint32_t *)sp_l  - 2 + i));
+		printf("[SP + %2d] = 0x%x\n", (i - 8) * sizeof(uint32_t), *((uint32_t *)sp_l  - 8 + i));
 	}
 }
 
@@ -436,17 +323,21 @@ static uint32_t stack[2048];
 int btrace_branch_hook_c(regs_t * args)
 {
 	mambo_context * ctx = args->ctx;
+	int i = 0;
+	for (i = 0; i < stack_pos; ++i)
+		printf("\t");
+	printf("CALL ");
 
 	if (mambo_get_inst_type(args->ctx) == ARM_INST)
 	{
+		printf("ARM (%d)\n", ctx->code.inst);
+
 		if (ctx->code.inst == ARM_BLX)
 		{
 			stack[stack_pos++] = args->pc + 4 + 1;
 		}
 		else
 		{
-			printf("Other CALL instruction\n");
-
 			stack[stack_pos++] = args->pc + 4 + 1;
 		}
 	}
@@ -455,22 +346,25 @@ int btrace_branch_hook_c(regs_t * args)
 		switch (ctx->code.inst)
 		{
 			case THUMB_BL32:
+				printf("THUMB_BL32");
 				stack[stack_pos++] = args->pc + 4 + 1;
 
 				break;
 
 			case THUMB_BLX16:
-				stack[stack_pos++] = args->pc + 2;
+				printf("THUMB_BLX16");
+				stack[stack_pos++] = args->pc + 2 + 1;
 
 				break;
 
 			case THUMB_BL_ARM32:
+				printf("THUMB_BL_ARM32");
 				stack[stack_pos++] = args->pc + 4 + 1;
 
 				break;
 
 			default:
-				printf("THUMB BRANCH (%d)\n", ctx->code.inst);
+				printf("THUMB BRANCH (%d)", ctx->code.inst);
 
 				stack[stack_pos++] = args->pc + 2 + 1;
 
@@ -478,10 +372,7 @@ int btrace_branch_hook_c(regs_t * args)
 		}
 	}
 
-	if (stack_pos == 2048)
-		stack_pos--;
-
-	// printf("LR = 0x%x SP = 0x%x\n", stack[stack_pos - 1], args->sp);
+	printf("(LR = 0x%x)\n", stack[stack_pos - 1]);
 
 
 	return 0;
@@ -491,11 +382,31 @@ int btrace_return_hook_c(regs_t * args)
 {
 	mambo_context * ctx = args->ctx;
 	uint32_t retaddr;
+	int i;
+	for (i = 0; i < stack_pos - 1; ++i)
+		printf("\t");
 
+	printf("RET ");
 	if (mambo_get_inst_type(args->ctx) == ARM_INST)
 	{
-		printf("ARM RET\n");
-		retaddr = 0;
+		switch (ctx->code.inst)
+		{
+			case ARM_BX:
+			{
+				printf("ARM_BX\n");
+				retaddr = args->gprs[lr];
+
+				break;
+			}
+			default:
+			{
+				printf("RUN: Unsupported ARM return (%d)!\n", ctx->code.inst);
+
+				retaddr = 0;
+
+				break;
+			}
+		}
 	}
 	else
 	{
@@ -504,25 +415,42 @@ int btrace_return_hook_c(regs_t * args)
 		switch (ctx->code.inst)
 		{
 			case THUMB_POP16:
-				retaddr = *((uint32_t *)((uint8_t *)args->sp + args->other));
+			{
+				printf("THUMB_POP16\n");
+				retaddr = *((uint32_t *)((uint8_t *)args->sp + args->arg));
+
 				break;
+			}
 
 			case THUMB_BX16:
 			{
-				retaddr = args->gprs[args->other];
+				printf("THUMB_BX16\n");
+				retaddr = args->gprs[lr];
 
 				break;
 			}
 
 			case THUMB_LDRI32:
 			{
+				printf("THUMB_LDRI32\n");
 				retaddr = *((uint32_t *)args->sp);
 
 				break;
 			}
 
+			case THUMB_LDMFD32:
+			{
+				printf("THUMB_LDMFD32\n");
+				retaddr = *((uint32_t *)((uint8_t *)args->sp + args->arg));
+
+				break;
+			}
+
 			default:
+			{
+				printf("RUN: Unsupported THUMB return (%d)!\n", ctx->code.inst);
 				retaddr = 0;
+			}
 		}
 
 	}
@@ -531,17 +459,15 @@ int btrace_return_hook_c(regs_t * args)
 
 	if (retaddr != stack[--stack_pos])
 	{
-		printf("Wrong return address. Expected (shadow): 0x%x Prediction (read): 0x%x (Woo %u success!)\n", stack[stack_pos], retaddr, returns);
+		printf("Wrong return address. Expected (shadow): 0x%x Prediction (read): 0x%x (Failed %u times)\n", stack[stack_pos], retaddr, ++returns);
+		stack_pos++;
 
+		regs_print(args->gprs);
 		stack_print(args->sp);
-		exit(1);
+
+		if (returns == 2)
+			exit(1);
 	}
-
-	returns++;
-
-	return 0;
-	// if (++returns == 11)
-	// 	exit(1);
 
 	return 0;
 }
@@ -557,12 +483,17 @@ int btrace_pre_inst_handler(mambo_context *ctx)
 	/* PC is where I read from rather actial BB branch address */
 	regs->pc = (uint32_t)ctx->code.read_address;
 	regs->ctx = cpy;
-	// regs->lr = context_reg(14);
 
-	//printf("Run RETS = %u\n", returns);
+	if ((type & BRANCH_RETURN == 0) || (type & BRANCH_CALL == 0))
+	{
+		return 0;
+	}
 
 	emit_push(ctx, 7);
 	emit_set_reg_ptr(ctx, r0, regs);
+
+	/* Get what's now is LR as any other place will ruin it. */
+	emit_mov(ctx, r1, lr);
 	emit_mov(ctx, r2, sp);
 
 	if (type & BRANCH_RETURN)
@@ -610,6 +541,21 @@ int btrace_pre_inst_handler(mambo_context *ctx)
 					break;
 				}
 
+				case THUMB_LDMFD32:
+				{
+					int i;
+					uint32_t writeback, rn, reglist, count = 0;
+
+					thumb_ldmfd32_decode_fields(ctx->code.read_address, &writeback, &rn, &reglist);
+
+					for (i = 0; i < lr; ++i)
+						count += ((1 << i) & reglist) != 0;
+
+					arg = count * sizeof(uint32_t);
+
+					break;
+				}
+
 				default:
 				{
 					printf("Not any decoded THUMB instruction (%d)\n", ctx->code.inst);
@@ -620,10 +566,26 @@ int btrace_pre_inst_handler(mambo_context *ctx)
 		}
 		else
 		{
-			printf("Not a THUMB return (%d)!\n", ctx->code.inst);
+			uint32_t inst = *((uint32_t *)ctx->code.read_address);
+
+			switch (ctx->code.inst)
+			{
+				case ARM_BX:
+				{
+					arg = (inst >> 3) & 0xf;
+
+					break;
+				}
+				default:
+				{
+					printf("SCAN: ARM return (%d)!\n", ctx->code.inst);
+
+					break;
+				}
+			}
 		}
 
-		regs->other = arg;
+		regs->arg = arg;
 
 		emit_safe_fcall(ctx, btrace_return_hook, 2);
 	}
