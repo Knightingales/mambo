@@ -326,14 +326,17 @@ int btrace_branch_hook_c(regs_t * args)
 	uint32_t retpos = 0;
 
 	int i = 0;
+#ifdef DEBUG
 	for (i = 0; i < stack_pos; ++i)
 		printf("\t");
 	printf("(%8p) CALL ", ctx->code.read_address);
+#endif
 
 	if (mambo_get_inst_type(args->ctx) == ARM_INST)
 	{
+#ifdef DEBUG
 		printf("ARM (%d)", ctx->code.inst);
-
+#endif
 		if (ctx->code.inst == ARM_BLX)
 		{
 			retpos = args->pc + 4 + 1;
@@ -348,26 +351,33 @@ int btrace_branch_hook_c(regs_t * args)
 		switch (ctx->code.inst)
 		{
 			case THUMB_BL32:
+#ifdef DEBUG
 				printf("THUMB_BL32");
+#endif
 				retpos = args->pc + 4 + 1;
 
 				break;
 
 			case THUMB_BLX16:
+#ifdef DEBUG
 				printf("THUMB_BLX16");
+#endif
 				retpos = args->pc + 2 + 1;
 
 				break;
 
 			case THUMB_BL_ARM32:
+#ifdef DEBUG
 				printf("THUMB_BL_ARM32");
+#endif
 				retpos = args->pc + 4 + 1;
 
 				break;
 
 			default:
+#ifdef DEBUG
 				printf("THUMB BRANCH (%d)", ctx->code.inst);
-
+#endif
 				retpos = args->pc + 2 + 1;
 
 				break;
@@ -376,9 +386,9 @@ int btrace_branch_hook_c(regs_t * args)
 
 	stack[stack_pos++] = retpos;
 
-	//stack_pos--;
+#ifdef DEBUG
 	printf("(SP = 0x%x Ret = 0x%x)\n", args->sp, stack[stack_pos - 1]);
-
+#endif
 
 	return 0;
 }
@@ -388,17 +398,21 @@ int btrace_return_hook_c(regs_t * args)
 	mambo_context * ctx = args->ctx;
 	uint32_t retaddr;
 	int i;
+#ifdef DEBUG
 	for (i = 0; i < stack_pos - 1; ++i)
 		printf("\t");
 
 	printf("(%8p) RET ", ctx->code.read_address);
+#endif
 	if (mambo_get_inst_type(args->ctx) == ARM_INST)
 	{
 		switch (ctx->code.inst)
 		{
 			case ARM_BX:
 			{
+#ifdef DEBUG
 				printf("ARM_BX");
+#endif
 				retaddr = args->gprs[lr];
 
 				break;
@@ -406,25 +420,43 @@ int btrace_return_hook_c(regs_t * args)
 
 			case ARM_LDM:
 			{
-				uint32_t rn, regs, prepost, updown, wb, psr, i, count;
+				uint32_t rn, regs, prepost, updown, wb, psr, i, count, regval;
 
-				printf("ARM_LDM");
-
+#ifdef DEBUG
+				printf("ARM_LDM ");
+#endif
 				arm_ldm_decode_fields(ctx->code.read_address, &rn, &regs, &prepost, &updown, &wb, &psr);
 
-				for (i = 0; i < lr; ++i)
+				count = 0;
+
+				for (i = 0; i < 16; ++i)
 					if (regs & (1 << i))
 						count++;
 
-				retaddr = args->gprs[lr]; // *((uint32_t *)((uint8_t *)args->gprs[rn] + (!updown) * (-1) * (count - prepost) * sizeof(uint32_t)));
+				count--;
+
+				if (rn == sp)
+				{
+					regval = args->sp;
+				}
+				else
+				{
+					regval = args->gprs[rn];
+				}
+
+#ifdef DEBUG
+				printf("SP = Rn = %u, Regs = 0x%x, prepost = %u, updown = %u, wb = %u, psr = %u\n", rn, regs, prepost, updown, wb, psr);
+#endif
+				retaddr = *((uint32_t *)regval + (updown ? 1 : -1) * (count - prepost));
 
 				break;
 
 			}
 			default:
 			{
-				printf("RUN: Unsupported ARM return (%d)!", ctx->code.inst);
-
+#ifdef DEBUG
+				printf("RUN: Unsupported ARM return (%d)!\n", ctx->code.inst);
+#endif
 				retaddr = 0;
 
 				break;
@@ -439,7 +471,9 @@ int btrace_return_hook_c(regs_t * args)
 		{
 			case THUMB_POP16:
 			{
+#ifdef DEBUG
 				printf("THUMB_POP16");
+#endif
 				retaddr = *((uint32_t *)((uint8_t *)args->sp + args->arg));
 
 				break;
@@ -447,7 +481,9 @@ int btrace_return_hook_c(regs_t * args)
 
 			case THUMB_BX16:
 			{
+#ifdef DEBUG
 				printf("THUMB_BX16 (rn = %u)", args->arg);
+#endif
 				retaddr = args->gprs[lr];
 
 				break;
@@ -455,7 +491,9 @@ int btrace_return_hook_c(regs_t * args)
 
 			case THUMB_LDRI32:
 			{
+#ifdef DEBUG
 				printf("THUMB_LDRI32");
+#endif
 				retaddr = *((uint32_t *)args->sp);
 
 				break;
@@ -463,22 +501,38 @@ int btrace_return_hook_c(regs_t * args)
 
 			case THUMB_LDMFD32:
 			{
-				printf("THUMB_LDMFD32");
-				retaddr = *((uint32_t *)((uint8_t *)args->sp + args->arg));
+				int i;
+				uint32_t writeback, rn, reglist, count = 0;
+				uint32_t regval;
+
+				thumb_ldmfd32_decode_fields(ctx->code.read_address, &writeback, &rn, &reglist);
+
+				for (i = 0; i < 16; ++i)
+					if ((1 << i) & reglist)
+						count++;
+				count--;
+#ifdef DEBUG
+				printf("THUMB_LDMFD32 writeback = %u rn = %u reglist = 0x%x\n", writeback, rn, reglist);
+#endif
+				retaddr = *((uint32_t *)args->sp + count);
 
 				break;
 			}
 
 			default:
 			{
-				printf("RUN: Unsupported THUMB return (%d)!", ctx->code.inst);
+#ifdef DEBUG
+				printf("RUN: Unsupported THUMB return (%d)!\n", ctx->code.inst);
+#endif
 				retaddr = 0;
 			}
 		}
 
 	}
 
-	printf(" (SP = 0x%x Ret = 0x%x)\n", args->sp, retaddr);
+#ifdef DEBUG
+		printf(" (SP = 0x%x Ret = 0x%x)\n", args->sp, retaddr);
+#endif
 
 	if ((retaddr != stack[stack_pos - 1]) && ((retaddr | 1) != stack[stack_pos - 1]))
 	{
@@ -493,7 +547,7 @@ int btrace_return_hook_c(regs_t * args)
 
 		for (i = 1; i < stack_pos - 1; ++i)
 		{
-			if (retaddr == stack[stack_pos - 1 - i])
+			if ((retaddr == stack[stack_pos - 1 - i]) || ((retaddr | 1) == stack[stack_pos - 1 - i]))
 			{
 				/* printf("Unwinding the stack %d functions\n", i); */
 
@@ -503,8 +557,12 @@ int btrace_return_hook_c(regs_t * args)
 			}
 		}
 
-		printf("Wrong return address. Expected (shadow): 0x%x Prediction (read): 0x%x (Failed %u times)\n", stack[stack_pos], retaddr, ++returns);
+		printf("%s instruction %d. Wrong return address. Expected (shadow): 0x%x Prediction (read): 0x%x (Failed %u times)\n", mambo_get_inst_type(args->ctx) == ARM_INST ? "ARM" : "THUMB", args->ctx->code.inst, stack[stack_pos], retaddr, ++returns);
 
+		for (i = 0; i < stack_pos; ++i)
+		{
+			printf("[SHADOW + %i] = 0x%x\n", i, stack[stack_pos - i]);
+		}
 
 		regs_print(args->gprs);
 		stack_print(args->sp);
@@ -955,6 +1013,7 @@ int mtrace_pre_thread_handler(mambo_context *ctx) {
 
 int mtrace_post_thread_handler(mambo_context *ctx)
 {
+#if DIAG_COUNTERS
 	uint32_t thumb_movh16;
 	uint32_t thumb_pop16;
 	uint32_t thumb_ldri32;
@@ -997,6 +1056,7 @@ int mtrace_post_thread_handler(mambo_context *ctx)
 	printf("ARM Misc: %u\n", branches.arm_misc);
 	printf("ARM Other: %u\n", branches.arm_other);
 	printf("ARM Total: %u\n", branches.total);
+#endif
 }
 
 __attribute__((constructor)) void btrace_init_plugin() {

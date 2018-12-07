@@ -393,7 +393,9 @@ int unregister_thread(dbm_thread *thread_data, bool caller_has_lock) {
 }
 
 void dbm_exit(dbm_thread *thread_data, uint32_t code) {
+#ifdef DEBUG
   fprintf(stderr, "We're done; exiting with status: %d\n", code);
+#endif
 
 #ifdef PLUGINS_NEW
   lock_thread_list();
